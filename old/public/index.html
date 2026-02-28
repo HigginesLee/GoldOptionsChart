@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CME合约数据获取工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#10b981',
+                        danger: '#ef4444',
+                        dark: '#1e293b',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .transition-custom {
+                transition: all 0.3s ease;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <header class="mb-8 text-center">
+            <h1 class="text-[clamp(1.8rem,4vw,2.5rem)] font-bold text-dark mb-2">CME合约数据获取工具</h1>
+            <p class="text-gray-600">输入合约代码，获取并保存相关数据</p>
+        </header>
+
+        <main class="bg-white rounded-xl shadow-md p-6 mb-8 transform hover:shadow-lg transition-custom">
+            <div class="flex flex-col md:flex-row gap-4 mb-6">
+                <div class="flex-1">
+                    <label for="contractCode" class="block text-sm font-medium text-gray-700 mb-1">合约代码</label>
+                    <div class="relative">
+                        <input 
+                            type="text" 
+                            id="contractCode" 
+                            placeholder="例如: 2509" 
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary transition-custom"
+                        >
+                        <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                            <i class="fa fa-info-circle text-gray-400" title="输入合约代码，如2509表示2025年9月"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex items-end">
+                    <button 
+                        id="fetchButton" 
+                        class="bg-primary hover:bg-primary/90 text-white font-medium px-6 py-2 rounded-lg transition-custom flex items-center gap-2"
+                    >
+                        <i class="fa fa-download"></i>
+                        <span>获取数据</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="mb-6">
+                <h2 class="text-lg font-semibold text-gray-800 mb-3">可用合约代码</h2>
+                <div id="contractList" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-40 overflow-y-auto p-2 bg-gray-50 rounded-lg">
+                    <!-- 合约列表将通过JavaScript动态生成 -->
+                </div>
+            </div>
+
+            <div id="statusMessage" class="hidden p-4 rounded-lg mb-4"></div>
+
+            <div id="loadingIndicator" class="hidden flex justify-center items-center py-6">
+                <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+            </div>
+
+            <div id="resultContainer" class="hidden mt-6">
+                <h2 class="text-lg font-semibold text-gray-800 mb-3">数据预览</h2>
+                <div class="bg-gray-50 p-4 rounded-lg overflow-x-auto max-h-60 overflow-y-auto">
+                    <pre id="resultPreview" class="text-sm text-gray-800"></pre>
+                </div>
+            </div>
+        </main>
+
+        <footer class="text-center text-gray-500 text-sm">
+            <p>© 2023 CME合约数据获取工具 | 数据来源: CME Group</p>
+        </footer>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const contractCodeInput = document.getElementById('contractCode');
+            const fetchButton = document.getElementById('fetchButton');
+            const statusMessage = document.getElementById('statusMessage');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const resultContainer = document.getElementById('resultContainer');
+            const resultPreview = document.getElementById('resultPreview');
+            const contractList = document.getElementById('contractList');
+
+            // 加载可用合约列表
+            fetch('/contracts')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        data.contracts.forEach(contract => {
+                            const contractItem = document.createElement('div');
+                            contractItem.className = 'bg-white p-2 rounded border border-gray-200 hover:border-primary cursor-pointer transition-custom';
+                            contractItem.innerHTML = `
+                                <div class="font-medium">${contract.code}</div>
+                                <div class="text-xs text-gray-500">${contract.name}</div>
+                            `;
+                            contractItem.addEventListener('click', () => {
+                                contractCodeInput.value = contract.code;
+                            });
+                            contractList.appendChild(contractItem);
+                        });
+                    }
+                })
+                .catch(error => {
+                    showMessage('加载合约列表失败', 'error');
+                    console.error('Error loading contracts:', error);
+                });
+
+            // 显示消息
+            function showMessage(text, type = 'info') {
+                statusMessage.textContent = text;
+                statusMessage.classList.remove('hidden', 'bg-green-100', 'text-green-800', 'bg-red-100', 'text-red-800', 'bg-blue-100', 'text-blue-800');
+                
+                if (type === 'success') {
+                    statusMessage.classList.add('bg-green-100', 'text-green-800');
+                } else if (type === 'error') {
+                    statusMessage.classList.add('bg-red-100', 'text-red-800');
+                } else {
+                    statusMessage.classList.add('bg-blue-100', 'text-blue-800');
+                }
+            }
+
+            // 隐藏消息
+            function hideMessage() {
+                statusMessage.classList.add('hidden');
+            }
+
+            // 显示加载指示器
+            function showLoading() {
+                loadingIndicator.classList.remove('hidden');
+                resultContainer.classList.add('hidden');
+                hideMessage();
+            }
+
+            // 隐藏加载指示器
+            function hideLoading() {
+                loadingIndicator.classList.add('hidden');
+            }
+
+            // 处理获取数据
+            fetchButton.addEventListener('click', async () => {
+                const contractCode = contractCodeInput.value.trim();
+                
+                if (!contractCode) {
+                    showMessage('请输入合约代码', 'error');
+                    return;
+                }
+
+                showLoading();
+
+                try {
+                    const response = await fetch('/fetch-data', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ contractCode })
+                    });
+
+                    const result = await response.json();
+                    hideLoading();
+
+                    if (result.success) {
+                        showMessage(result.message, 'success');
+                        
+                        // 显示数据预览（只显示前1000个字符）
+                        const dataStr = JSON.stringify(result.data, null, 2);
+                        resultPreview.textContent = dataStr.length > 1000 
+                            ? dataStr.substring(0, 1000) + '...\n\n(数据已截断以提高性能)' 
+                            : dataStr;
+                        resultContainer.classList.remove('hidden');
+                    } else {
+                        showMessage(result.message, 'error');
+                        resultContainer.classList.add('hidden');
+                    }
+                } catch (error) {
+                    hideLoading();
+                    showMessage('请求失败: ' + error.message, 'error');
+                    console.error('Error:', error);
+                }
+            });
+
+            // 支持回车键提交
+            contractCodeInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    fetchButton.click();
+                }
+            });
+        });
+    </script>
+</body>
+</html>

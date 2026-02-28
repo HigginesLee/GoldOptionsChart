@@ -1,0 +1,633 @@
+<!-- Auth LingX -->
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>黄金期权分布可视化</title>
+  <!-- 引入 ECharts CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
+  <link rel="stylesheet" href="index.css">
+  <script src="data.js"></script>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>黄金期权分布可视化</h1>
+      <div class="price-range">
+        价格范围:
+        <input type="number" id="minPrice" value="3000" placeholder="最小值">
+        -
+        <input type="number" id="maxPrice" value="3600" placeholder="最大值">
+        <button class="control-btn" id="setPriceRange">设置价格范围</button>
+      </div>
+      <div class="max-pain">
+        <h3>最大痛苦价格: <span id="maxPainPrice">计算中...</span></h3>
+        <p>对应亏损合约总数: <span id="maxPainContracts">计算中...</span></p>
+      </div>
+    </div>
+
+    <div class="control-section">
+      <div class="slider-control">
+        <div class="slider-label">
+          <span>数据量: 50</span>
+          <span class="current-count" id="currentCount">200</span>
+          <span>数据量: 200</span>
+        </div>
+        <input type="range" id="dataRange" min="50" max="200" step="10" value="200">
+      </div>
+
+      <button class="control-btn" id="highlightMaxPain">高亮最大痛苦价格</button>
+
+      <div class="label-controls">
+        <button class="control-btn" id="showStockLabels">显示存量值</button>
+        <button class="control-btn" id="showChangeLabels">显示变动值</button>
+      </div>
+
+      <div class="detail-controls">
+        <button class="control-btn" id="toggleStep">切换步长 (当前: 5)</button>
+        <!-- 新增阈值调整控制 -->
+        <div style="margin-top:10px;">
+          变动值显示阈值:
+          <input type="number" id="changeThreshold" value="8" min="0" max="100" style="width:60px;">
+          <button class="control-btn" id="setThreshold">设置</button>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <button class="control-btn" id="saveCombinedChart">保存期权图片</button>
+      </div>
+    </div>
+
+    <div class="charts">
+      <div class="chart-container">
+        <h2>看涨期权（存量折线 + 变动柱形）</h2>
+        <div class="chart-wrapper">
+          <div id="callChart" class="chart-inner"></div>
+        </div>
+      </div>
+      <div class="chart-container">
+        <h2>看跌期权（存量折线 + 变动柱形）</h2>
+        <div class="chart-wrapper">
+          <div id="putChart" class="chart-inner"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <script type="module">
+    let minPrice = 3100;
+    let maxPrice = 3800;
+    let showStockLabels = true;
+    let showChangeLabels = true;
+    let stepSize = 5;
+    let changeThreshold = 8; // 变动值显示阈值
+
+    // 黄金期权最大痛苦价值计算
+    class GoldMaxPainCalculator {
+      constructor(rawData, options = {}) {
+        this.config = {
+          contractMultiplier: options.contractMultiplier || 100,
+          minOpenInterest: options.minOpenInterest || 0,
+          oiField: options.oiField || 'atClose',
+          useValueWeight: options.useValueWeight !== undefined ? options.useValueWeight : true
+        };
+
+        this.rawData = rawData;
+        this.normalizedOptions = [];
+        this.maxPainResult = null;
+      }
+
+      normalizeData() {
+        if (!this.rawData?.monthData || !Array.isArray(this.rawData.monthData)) {
+          throw new Error("无效数据格式：缺少monthData数组");
+        }
+
+        this.normalizedOptions = [];
+
+        this.rawData.monthData.forEach(monthItem => {
+          const optionType = monthItem.label === "Calls" ? "call" : "put";
+
+          if (monthItem.strikeData && Array.isArray(monthItem.strikeData)) {
+            monthItem.strikeData.forEach(strikeItem => {
+              const openInterest = this.parseNumber(strikeItem[this.config.oiField]);
+
+              if (openInterest < this.config.minOpenInterest) {
+                return;
+              }
+
+              const strikePrice = this.parseNumber(strikeItem.strike);
+              if (strikePrice < minPrice || strikePrice > maxPrice) {
+                return;
+              }
+
+              const contractValue = openInterest * this.config.contractMultiplier;
+
+              this.normalizedOptions.push({
+                strike: strikePrice,
+                type: optionType,
+                openInterest: openInterest,
+                contractValue: contractValue
+              });
+            });
+          }
+        });
+
+        return this;
+      }
+
+      parseNumber(value) {
+        if (typeof value === 'number') {
+          return value;
+        }
+
+        if (typeof value === 'string') {
+          const cleaned = value.replace(/[^0-9.-]/g, '');
+          return parseFloat(cleaned) || 0;
+        }
+
+        return 0;
+      }
+
+      calculate() {
+        if (this.normalizedOptions.length === 0) {
+          this.normalizeData();
+        }
+
+        const strikePrices = [...new Set(
+          this.normalizedOptions.map(option => option.strike)
+        )].sort((a, b) => a - b);
+
+        const painDetails = {};
+        strikePrices.forEach(price => {
+          painDetails[price] = this.calculatePainAtPrice(price);
+        });
+
+        this.maxPainResult = this.findMaxPainPoint(painDetails);
+
+        return {
+          maxPainPrice: this.maxPainResult.maxPrice,
+          maxPainValue: this.maxPainResult.maxValue,
+          details: painDetails
+        };
+      }
+
+      calculatePainAtPrice(price) {
+        return this.normalizedOptions.reduce((totalPain, option) => {
+          if (option.type === 'call' && price <= option.strike) {
+            return totalPain + (this.config.useValueWeight ? option.contractValue : option.openInterest);
+          }
+
+          if (option.type === 'put' && price >= option.strike) {
+            return totalPain + (this.config.useValueWeight ? option.contractValue : option.openInterest);
+          }
+
+          return totalPain;
+        }, 0);
+      }
+
+      findMaxPainPoint(painDetails) {
+        let maxPrice = null;
+        let maxValue = 0;
+
+        Object.entries(painDetails).forEach(([priceStr, value]) => {
+          const price = parseFloat(priceStr);
+          if (value > maxValue) {
+            maxValue = value;
+            maxPrice = price;
+          }
+        });
+
+        return { maxPrice, maxValue };
+      }
+    }
+
+    // 处理数据为 ECharts 所需格式 - 新增变动值过滤
+    function processChartData(data, optionType, maxItems = 200) {
+      const target = data.monthData.find(item => item.label === optionType);
+      if (!target) return {
+        strike: [],
+        oi: [],
+        change: [],
+        originalData: []
+      };
+
+      // 原始数据处理
+      let originalData = target.strikeData.map(item => ({
+        strike: parseInt(item.strike),
+        oi: parseInt(item.atClose.replace(/,/g, '')),
+        change: parseInt(item.change.replace(/,/g, ''))
+      }))
+        .filter(item => item.strike >= minPrice && item.strike <= maxPrice)
+        .sort((a, b) => a.strike - b.strike);
+
+      // 应用步长过滤
+      originalData = originalData.filter(item => item.strike % stepSize === 0);
+
+      // 限制数据量
+      let processedData = originalData;
+      if (maxItems && maxItems > 0 && originalData.length > maxItems) {
+        const midIndex = Math.floor(originalData.length / 2);
+        const half = Math.floor(maxItems / 2);
+        let start = midIndex - half;
+        let end = midIndex + (maxItems - half);
+
+        if (start < 0) {
+          start = 0;
+          end = maxItems;
+        }
+        if (end > originalData.length) {
+          end = originalData.length;
+          start = Math.max(0, end - maxItems);
+        }
+
+        processedData = originalData.slice(start, end);
+      }
+
+      // 排序数据（配合y轴反转）
+      const sortedData = [...processedData].sort((a, b) => a.strike - b.strike);
+
+      return {
+        strike: sortedData.map(item => item.strike),
+        oi: sortedData.map(item => item.oi),
+        change: sortedData.map(item => item.change),
+        originalData: originalData
+      };
+    }
+
+    // 全局变量
+    let callChart, putChart;
+    let callChartData, putChartData;
+    let maxPainPrice = null;
+    let currentMaxItems = 200;
+
+    // 初始化图表（彻底修复变动值显示逻辑）
+    function initChart(domId, optionType, data) {
+      const myChart = echarts.init(document.getElementById(domId));
+      const { strike, oi, change } = data;
+      const mainColor = optionType === 'Calls' ? '#1890FF' : '#1890FF';
+      const increaseColor = '#2FC25B';
+      const decreaseColor = '#FF4D4F';
+
+      // 标记线配置
+      const markLines = [];
+
+      if (maxPainPrice) {
+        markLines.push({
+          name: '最大痛苦价格',
+          yAxis: maxPainPrice,
+          lineStyle: {
+            color: '#FF4D4F',
+            width: 2,
+            type: 'dashed'
+          },
+          label: {
+            show: true,
+            formatter: `最大痛苦: ${maxPainPrice}`,
+            color: '#FF4D4F'
+          }
+        });
+      }
+
+      // 为变动值系列准备数据 - 明确处理小值 阈值处理
+      const processedChangeData = change.map(value => {
+        // 对于小于阈值的变动值，我们不显示标签，但保留柱子
+        return {
+          value: value,
+          itemStyle: {
+            // 可以为小值设置不同的透明度，但保留柱子
+            opacity: Math.abs(value) < changeThreshold ? 0 : 1
+          }
+        };
+      });
+
+      const option = {
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: { type: 'shadow' },
+          formatter: (params) => {
+            const strikePrice = params[0].axisValue;
+            const oiValue = params[0].value;
+            const changeValue = params[1].value;
+            return `行权价：${strikePrice}<br>存量：${oiValue}<br>变动：${changeValue}`;
+          }
+        },
+        legend: {
+          data: ['存量', '变动'],
+          textStyle: { color: '#ccc' },
+          top: 0
+        },
+        xAxis: [
+          {
+            type: 'value',
+            name: '存量',
+            position: 'bottom',
+            axisLabel: { color: '#ccc' },
+            axisLine: { lineStyle: { color: '#666' } },
+            splitLine: { lineStyle: { color: '#333' } },
+            min: 0,
+            max: function (value) {
+              return value.max * 1.3;
+            }
+          },
+          {
+            type: 'value',
+            name: '变动',
+            position: 'top',
+            axisLabel: {
+              color: '#ccc',
+              formatter: function (value) {
+                return value > 0 ? `+${value}` : value;
+              }
+            },
+            axisLine: { lineStyle: { color: '#666' } },
+            splitLine: { show: false },
+            min: function (value) {
+              const range = Math.max(Math.abs(value.max), Math.abs(value.min)) * 2;
+              return -range * 0.5;
+            },
+            max: function (value) {
+              const range = Math.max(Math.abs(value.max), Math.abs(value.min)) * 2;
+              return range * 0.5;
+            }
+          }
+        ],
+        yAxis: {
+          type: 'category',
+          data: strike,
+          axisLabel: { color: '#ccc', interval: 0 },
+          axisLine: { lineStyle: { color: '#666' } },
+          splitLine: { lineStyle: { color: '#333' } },
+          markLine: { data: markLines },
+          inverse: false
+        },
+        series: [
+          {
+            name: '存量',
+            type: 'line',
+            data: oi,
+            xAxisIndex: 0,
+            smooth: false,
+            symbol: 'circle',
+            symbolSize: 6,
+            lineStyle: { color: mainColor, width: 2.5 },
+            itemStyle: { color: mainColor },
+            label: {
+              show: showStockLabels,
+              position: 'right',
+              color: mainColor,
+              formatter: function (params) {
+                return params.value.toString();
+              }
+            }
+          },
+          {
+            name: '变动',
+            type: 'bar',
+            data: processedChangeData, // 使用处理后的变动值数据
+            xAxisIndex: 1,
+            barWidth: '40%',
+            itemStyle: {
+              color: function (params) {
+                return params.value >= 0 ? increaseColor : decreaseColor;
+              },
+              borderRadius: 0
+            },
+            // 最终修复：确保变动值小于阈值时不显示标签
+            label: {
+              show: showChangeLabels,
+              position: 'right',
+              color: function (params) {
+                return params.value >= 0 ? increaseColor : decreaseColor;
+              },
+              formatter: function (params) {
+                return params.value > 0 ? `+${params.value}` : params.value;
+              }
+            }
+          }
+        ],
+        grid: {
+          left: '10%',
+          right: '25%',
+          bottom: '5%',
+          top: '2%',
+          containLabel: true
+        }
+      };
+
+      // 调试信息 - 检查阈值和显示状态
+      console.log(`当前阈值: ${changeThreshold}, 显示变动值: ${showChangeLabels}`);
+      console.log(`变动值数据示例:`, change.slice(0, 10));
+
+      myChart.setOption(option);
+      return myChart;
+    }
+
+
+    // 保存期权图
+    // 合并保存两张图表为一张图片（优化版）
+    function saveCombinedCharts() {
+      if (!callChart || !putChart) {
+        alert('图表未初始化');
+        return;
+      }
+
+      // 获取图表原始尺寸（带缩放比例）
+      const scale = 0.8; // 整体缩放比例（0.8倍，可调整）
+      const callImgData = callChart.getDataURL({
+        type: 'png',
+        pixelRatio: 2, // 保持清晰度
+        backgroundColor: '#1E1E1E',
+        width: callChart.getWidth() * scale, // 按比例缩小宽度
+        height: callChart.getHeight() * scale // 按比例缩小高度
+      });
+      const putImgData = putChart.getDataURL({
+        type: 'png',
+        pixelRatio: 2,
+        backgroundColor: '#1E1E1E',
+        width: putChart.getWidth() * scale,
+        height: putChart.getHeight() * scale
+      });
+
+      const callImg = new Image();
+      const putImg = new Image();
+
+      callImg.onload = function () {
+        putImg.onload = function () {
+          // 计算合并后画布尺寸（预留标题区域）
+          const titleHeight = 80; // 标题区域高度
+          const canvasWidth = callImg.width + putImg.width;
+          const canvasHeight = callImg.height + titleHeight;
+
+          const canvas = document.createElement('canvas');
+          canvas.width = canvasWidth;
+          canvas.height = canvasHeight;
+          const ctx = canvas.getContext('2d');
+
+          // 绘制背景
+          ctx.fillStyle = '#1E1E1E';
+          ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+          // 绘制主标题（放大字体）
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 24px Arial'; // 增大标题字体
+          const mainTitle = '黄金期权分布可视化';
+          const mainTitleX = (canvasWidth - ctx.measureText(mainTitle).width) / 2;
+          ctx.fillText(mainTitle, mainTitleX, 30);
+
+          // 绘制子标题（调整位置和大小）
+          ctx.font = '18px Arial'; // 增大子标题字体
+          const callTitle = '看涨期权（存量折线 + 变动柱形）';
+          const putTitle = '看跌期权（存量折线 + 变动柱形）';
+          ctx.fillText(callTitle, 20, 60); // 调整位置
+          ctx.fillText(putTitle, callImg.width + 20, 60);
+
+          // 绘制图表（从标题下方开始）
+          ctx.drawImage(callImg, 0, titleHeight);
+          ctx.drawImage(putImg, callImg.width, titleHeight);
+
+          // 添加时间水印
+          ctx.font = '14px Arial';
+          ctx.fillStyle = 'rgba(255,255,255,0.5)';
+          const timeStr = new Date().toLocaleString();
+          ctx.fillText(`生成时间: ${timeStr}`, 10, canvasHeight - 10);
+
+          // 触发下载
+          const link = document.createElement('a');
+          link.download = `黄金期权合并图表_${new Date().getTime()}.png`;
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+        };
+        putImg.src = putImgData;
+      };
+      callImg.src = callImgData;
+    }
+
+
+
+    // 更新图表显示
+    function updateCharts(maxItems = 200) {
+      currentMaxItems = maxItems;
+      document.getElementById('currentCount').textContent = maxItems;
+      document.getElementById('showStockLabels').classList.toggle('active', showStockLabels);
+      document.getElementById('showChangeLabels').classList.toggle('active', showChangeLabels);
+      document.getElementById('toggleStep').textContent = `切换步长 (当前: ${stepSize})`;
+      document.getElementById('changeThreshold').value = changeThreshold;
+
+      const calculator = new GoldMaxPainCalculator(mockData);
+      const painResult = calculator.calculate();
+      maxPainPrice = painResult.maxPainPrice;
+      document.getElementById('maxPainPrice').textContent = maxPainPrice || '无数据';
+      document.getElementById('maxPainContracts').textContent = painResult.maxPainValue || '无数据';
+
+      callChartData = processChartData(mockData, 'Calls', maxItems);
+      putChartData = processChartData(mockData, 'Puts', maxItems);
+
+      if (callChart) callChart.dispose();
+      if (putChart) putChart.dispose();
+
+      callChart = initChart('callChart', 'Calls', callChartData);
+      putChart = initChart('putChart', 'Puts', putChartData);
+    }
+
+    // 加载数据
+    async function loadData() {
+      // 创建新的script元素
+      const script = document.createElement('script');
+
+      script.src = `./data.js?${new Date().valueOf()}`;
+
+      // 可选：设置其他属性
+      script.type = 'text/javascript';
+
+      // 将新创建的script标签添加到页面中
+      document.head.appendChild(script);
+    }
+    // 页面初始化
+    document.addEventListener('DOMContentLoaded', async () => {
+      try {
+        await import(`./data.js?ts=${new Date().getTime()}`);
+        updateCharts(200);
+
+        // 保存期权图 
+        document.getElementById('saveCombinedChart').addEventListener('click', saveCombinedCharts);
+        // 滑轮控制
+        document.getElementById('dataRange').addEventListener('input', (e) => {
+          updateCharts(parseInt(e.target.value));
+        });
+
+        // 高亮最大痛苦价格
+        document.getElementById('highlightMaxPain').addEventListener('click', () => {
+          if (maxPainPrice) {
+            const scrollToPrice = (chartId, price) => {
+              const chartWrapper = document.querySelector(`#${chartId}`).parentNode;
+              const index = callChartData.strike.indexOf(price);
+              if (index !== -1) {
+                chartWrapper.scrollTop = index * 38;
+              }
+            };
+
+            scrollToPrice('callChart', maxPainPrice);
+            scrollToPrice('putChart', maxPainPrice);
+          }
+        });
+
+        // 存量值显示控制
+        document.getElementById('showStockLabels').addEventListener('click', () => {
+          showStockLabels = !showStockLabels;
+          updateCharts(currentMaxItems);
+        });
+
+        // 变动值显示控制
+        document.getElementById('showChangeLabels').addEventListener('click', () => {
+          showChangeLabels = !showChangeLabels;
+          updateCharts(currentMaxItems);
+        });
+
+        // 步长切换
+        document.getElementById('toggleStep').addEventListener('click', () => {
+          stepSize = stepSize === 5 ? 10 : 5;
+          updateCharts(currentMaxItems);
+        });
+
+        // 变动值阈值设置
+        document.getElementById('setThreshold').addEventListener('click', () => {
+          const newThreshold = parseInt(document.getElementById('changeThreshold').value);
+          if (!isNaN(newThreshold) && newThreshold >= 0) {
+            changeThreshold = newThreshold;
+            updateCharts(currentMaxItems);
+          }
+        });
+
+        // 价格范围设置
+        document.getElementById('setPriceRange').addEventListener('click', () => {
+          const newMin = parseInt(document.getElementById('minPrice').value);
+          const newMax = parseInt(document.getElementById('maxPrice').value);
+
+          if (!isNaN(newMin) && !isNaN(newMax) && newMin < newMax) {
+            minPrice = newMin;
+            maxPrice = newMax;
+            updateCharts(currentMaxItems);
+          } else {
+            alert('请输入有效的价格范围（最小值 < 最大值）');
+          }
+        });
+
+        // 窗口大小调整
+        window.addEventListener('resize', () => {
+          if (callChart) callChart.resize();
+          if (putChart) putChart.resize();
+        });
+
+      } catch (error) {
+        console.error('初始化失败:', error);
+        alert('数据加载失败: ' + error.message);
+      }
+    });
+  </script>
+</body>
+
+</html>
