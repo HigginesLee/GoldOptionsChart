@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>黄金期权分布可视化</title>
+  <!-- 引入 ECharts CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
+  <link rel="stylesheet" href="index.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>黄金期权分布可视化</h1>
+      
+      <!-- 新增合约选择器 -->
+      <div class="contract-select">
+        <select id="contractSelector">
+          <option value="">请选择合约</option>
+        </select>
+        <button class="control-btn" id="loadContractData">加载数据</button>
+      </div>
+      
+      <div class="price-range">
+        价格范围:
+        <input type="number" id="minPrice" value="3000" placeholder="最小值">
+        -
+        <input type="number" id="maxPrice" value="3600" placeholder="最大值">
+        <button class="control-btn" id="setPriceRange">设置价格范围</button>
+      </div>
+      
+      <!-- 数据加载信息 -->
+      <div class="data-info" id="dataInfo">未加载数据</div>
+      
+      <div class="max-pain">
+        <h3>最大痛苦价格: <span id="maxPainPrice">未加载</span></h3>
+        <p>对应亏损合约总数: <span id="maxPainContracts">未加载</span></p>
+      </div>
+    </div>
+
+    <div class="control-section">
+      <div class="slider-control">
+        <div class="slider-label">
+          <span>数据量: 50</span>
+          <span class="current-count" id="currentCount">200</span>
+          <span>数据量: 200</span>
+        </div>
+        <input type="range" id="dataRange" min="50" max="200" step="10" value="200" disabled>
+      </div>
+
+      <button class="control-btn" id="highlightMaxPain" disabled>高亮最大痛苦价格</button>
+
+      <div class="label-controls">
+        <button class="control-btn" id="showStockLabels" disabled>显示存量值</button>
+        <button class="control-btn" id="showChangeLabels" disabled>显示变动值</button>
+      </div>
+
+      <div class="detail-controls">
+        <button class="control-btn" id="toggleStep" disabled>切换步长 (当前: 5)</button>
+        <!-- 新增阈值调整控制 -->
+        <div style="margin-top:10px;">
+          变动值显示阈值:
+          <input type="number" id="changeThreshold" value="8" min="0" max="100" style="width:60px;" disabled>
+          <button class="control-btn" id="setThreshold" disabled>设置</button>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <button class="control-btn" id="saveCombinedChart" disabled>保存期权图片</button>
+      </div>
+    </div>
+
+    <!-- 加载状态提示 -->
+    <div class="loading" id="loadingIndicator" style="display: none;">
+      正在加载数据，请稍候...
+    </div>
+
+    <div class="charts" id="chartsContainer" style="display: none;">
+      <div class="chart-container">
+        <h2>看涨期权（存量折线 + 变动柱形）</h2>
+        <div class="chart-wrapper">
+          <div id="callChart" class="chart-inner"></div>
+        </div>
+      </div>
+      <div class="chart-container">
+        <h2>看跌期权（存量折线 + 变动柱形）</h2>
+        <div class="chart-wrapper">
+          <div id="putChart" class="chart-inner"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 前端逻辑脚本 -->
+  <script src="app.js"></script>
+</body>
+</html>

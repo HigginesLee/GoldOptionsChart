@@ -1,3 +1,4 @@
+/* 保留原有样式，新增加载状态样式 */
 body {
   background-color: #1E1E1E;
   color: #fff;
@@ -29,6 +30,19 @@ body {
   width: 100px;
   text-align: center;
   margin: 0 10px;
+}
+/* 新增合约选择样式 */
+.contract-select {
+  margin: 20px 0;
+  text-align: center;
+}
+.contract-select select {
+  background-color: #333;
+  color: #fff;
+  border: 1px solid #666;
+  padding: 8px 16px;
+  border-radius: 4px;
+  margin-right: 10px;
 }
 .charts {
   display: flex;
@@ -117,6 +131,11 @@ input[type="range"]::-webkit-slider-thumb {
 .control-btn.active {
   background-color: #1890FF;
 }
+.control-btn:disabled {
+  background-color: #555;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
 .label-controls {
   margin-top: 10px;
   display: inline-block;
@@ -127,6 +146,12 @@ input[type="range"]::-webkit-slider-thumb {
 .detail-controls {
   margin-top: 10px;
 }
+.loading {
+  text-align: center;
+  padding: 40px;
+  font-size: 18px;
+  color: #1890FF;
+}
 /* 新增调试信息样式 */
 .debug-info {
   background: rgba(0,0,0,0.5);
@@ -134,4 +159,10 @@ input[type="range"]::-webkit-slider-thumb {
   margin: 10px 0;
   border-radius: 4px;
   font-size: 12px;
+}
+.data-info {
+  text-align: center;
+  color: #ccc;
+  font-size: 14px;
+  margin: 10px 0;
 }
